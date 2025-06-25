@@ -1,0 +1,78 @@
+name: Build macOS Wallet
+
+on:
+  push:
+    branches: [ main, master, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up environment
+      run: |
+        # Install dependencies
+        brew install automake libtool boost miniupnpc pkg-config python qt libevent qrencode fmt librsvg berkeley-db4 sqlite
+        
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/Library/Caches/Homebrew
+          depends/built
+        key: ${{ runner.os }}-deps-${{ hashFiles('**/Makefile.am', '**/configure.ac') }}
+        restore-keys: |
+          ${{ runner.os }}-deps-
+          
+    - name: Create Aegisum icon
+      run: |
+        chmod +x create-macos-icon.sh
+        ./create-macos-icon.sh
+        
+    - name: Build Aegisum Core
+      run: |
+        ./autogen.sh
+        ./configure --enable-reduce-exports --disable-bench --disable-tests --with-gui=qt5
+        make -j$(sysctl -n hw.ncpu)
+        
+    - name: Create app bundle
+      run: |
+        make appbundle
+        
+    - name: Deploy and create DMG
+      run: |
+        chmod +x deploy-macos.sh
+        ./deploy-macos.sh
+        
+    - name: Upload DMG artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: aegisum-core-macos-dmg
+        path: "*.dmg"
+        retention-days: 30
+        
+    - name: Upload app bundle
+      uses: actions/upload-artifact@v3
+      with:
+        name: aegisum-core-macos-app
+        path: "Aegisum-Qt.app"
+        retention-days: 30
+        
+    - name: Create Release (on tag)
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          *.dmg
+        draft: true
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
